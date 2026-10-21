@@ -1,16 +1,14 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-if not exist server_url.txt (
-  echo [Local Notion] server_url.txt 파일이 없습니다.
-  echo 관리자가 서버 주소를 설정해야 합니다. 예: http://192.168.0.10:8765
-  pause
-  exit /b 1
-)
-set /p TARGET=<server_url.txt
-if "%TARGET%"=="" (
- echo 서버 주소가 비어 있습니다.
+REM 각 직원 PC에서만 실행되는 로컬 웹앱. 모든 데이터는 공통 폴더에 저장.
+if not defined LOCAL_NOTION_DATA_DIR set "LOCAL_NOTION_DATA_DIR=%~dp0shared_data"
+where python >nul 2>&1
+if errorlevel 1 (
+ echo Python 3.10 이상이 필요합니다. 설치 정책을 확인하세요.
  pause
  exit /b 1
 )
-start "" "%TARGET%"
+start "" "http://127.0.0.1:8765"
+python local_app.py
+pause
