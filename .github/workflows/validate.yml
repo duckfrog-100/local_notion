@@ -1,0 +1,20 @@
+name: Validate Local Notion
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  python-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Syntax check
+        run: python -m py_compile local_app.py import_notion_html.py app.py
+      - name: Basic file structure
+        run: |
+          test -f local_index.html
+          test -f 공통폴더에서_실행.bat
+          test -f README.md
