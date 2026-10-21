@@ -4,17 +4,27 @@ on:
     branches: [main]
   pull_request:
 jobs:
-  python-check:
+  syntax:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Syntax check
+      - name: Python compile
         run: python -m py_compile local_app.py import_notion_html.py app.py
-      - name: Basic file structure
+      - name: JavaScript syntax checks
         run: |
-          test -f local_index.html
+          python - <<'PY'
+          from pathlib import Path
+          for path in ('local_index.html','vault.html'):
+              text=Path(path).read_text(encoding='utf-8')
+              js=text.split('<script>',1)[1].split('</script>',1)[0]
+              Path(path+'.js').write_text(js,encoding='utf-8')
+          PY
+          node --check local_index.html.js
+          node --check vault.html.js
+      - name: Required files
+        run: |
           test -f 공통폴더에서_실행.bat
           test -f README.md
