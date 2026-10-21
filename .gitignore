@@ -1,0 +1,6 @@
+runtime_data/
+*.db
+*.db-*
+__pycache__/
+.env
+*.log
