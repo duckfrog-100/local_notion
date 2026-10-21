@@ -12,11 +12,11 @@ function markup(s){
    while(j<lines.length&&/^\|.*\|$/.test(lines[j])){rows.push(lines[j].slice(1,-1).split('|').map(v=>v.trim()));j++}
    out.push('<table class="sheet"><thead><tr>'+header.map(v=>'<th>'+esc(v)+'</th>').join('')+'</tr></thead><tbody>'+rows.map(r=>'<tr>'+r.map(v=>'<td>'+esc(v)+'</td>').join('')+'</tr>').join('')+'</tbody></table>');i=j;continue;
   }
-  let x=lines[i++];if(/^- \[[ xX]\] /.test(x)){const checked=/^- \[[xX]\] /.test(x);out.push('<label class="todo"><input type="checkbox" data-line="'+(i-1)+'" '+(checked?'checked':'')+'> '+esc(x.slice(6))+'</label>');continue}if(x.startsWith(':::callout ')){out.push('<div class="callout">'+esc(x.slice(11))+'</div>');continue}if(x.startsWith(':::toggle ')){out.push('<details><summary>'+esc(x.slice(10))+'</summary><p>접힌 내용은 다음 줄에 작성할 수 있습니다.</p></details>');continue}if(/^\s*---\s*$/.test(x)){out.push('<hr>');continue}x=x.replace(/\[\[([^\]]+)\]\]/g,(all,title)=>{let p=pages.find(k=>k.title===title);return p?'['+title+'](#page-'+p.id+')':all});
+  let x=lines[i++];if(/^- \[[ xX]\] /.test(x)){const checked=/^- \[[xX]\] /.test(x);out.push('<label class="todo"><input type="checkbox" data-line="'+(i-1)+'" '+(checked?'checked':'')+'> '+esc(x.slice(6))+'</label>');continue}if(x.startsWith(':::callout ')){out.push('<div class="callout">'+esc(x.slice(11))+'</div>');continue}if(x.startsWith(':::toggle ')){const title=esc(x.slice(10));let detail=[];while(i<lines.length&&lines[i]!==':::end')detail.push(esc(lines[i++]));if(lines[i]===':::end')i++;out.push('<details><summary>'+title+'</summary><p>'+detail.join('<br>')+'</p></details>');continue}if(/^\s*---\s*$/.test(x)){out.push('<hr>');continue}x=x.replace(/\[\[([^\]]+)\]\]/g,(all,title)=>{let p=pages.find(k=>k.title===title);return p?'['+title+'](#page-'+p.id+')':all});
   let a=esc(x);
   a=a.replace(/!\[([^\]]*)\]\((\/images\/[a-f0-9]{32}\.(?:png|jpg|gif|webp))\s+"w=(\d{1,4})"\)/g,(_,alt,url,w)=>'<img alt="'+alt+'" src="'+url+'" style="width:min(100%,'+Math.min(1200,Math.max(80,Number(w)))+'px)">');
   a=a.replace(/!\[([^\]]*)\]\((\/images\/[a-f0-9]{32}\.(?:png|jpg|gif|webp))\)/g,'<img alt="$1" src="$2">').replace(/\*\*(.+?)\*\*/g,'<b>$1</b>');
-  a=a.replace(/==(.+?)==/g,'<mark>$1</mark>').replace(/\*([^*]+)\*/g,'<em>$1</em>').replace(/~~(.+?)~~/g,'<del>$1</del>');a=a.replace(/\[([^\]]+)\]\(#page-([a-f0-9]{32})\)/g,'<a href="#page-$2">$1</a>').replace(/\[([^\]]+)\]\((\/attachments\/[a-f0-9]{32}\.(?:pdf|docx|xlsx|pptx|csv))\)/g,'<a href="$2" download>$1 ⬇</a>');
+  a=a.replace(/\+\+(.+?)\+\+/g,'<u>$1</u>').replace(/==(.+?)==/g,'<mark>$1</mark>').replace(/\*([^*]+)\*/g,'<em>$1</em>').replace(/~~(.+?)~~/g,'<del>$1</del>');a=a.replace(/\[([^\]]+)\]\(#page-([a-f0-9]{32})\)/g,'<a href="#page-$2">$1</a>').replace(/\[([^\]]+)\]\((\/attachments\/[a-f0-9]{32}\.(?:pdf|docx|xlsx|pptx|csv))\)/g,'<a href="$2" download>$1 ⬇</a>');
   if(a.startsWith('### '))out.push('<h3>'+a.slice(4)+'</h3>');else if(a.startsWith('## '))out.push('<h2>'+a.slice(3)+'</h2>');else if(a.startsWith('# '))out.push('<h1>'+a.slice(2)+'</h1>');else out.push(a?'<p>'+a+'</p>':'<br>');
  }
  return out.join('');
@@ -25,7 +25,7 @@ function markup(s){
 const BLOCKS=[
  ['일반 텍스트','text',''],['제목 1','h1','# '],['제목 2','h2','## '],['제목 3','h3','### '],
  ['체크리스트','todo','- [ ] '],['글머리 목록','bullet','- '],['번호 목록','number','1. '],
- ['인용문','quote','> '],['구분선','divider','---\n'],['접기/펼치기','toggle',':::toggle 제목'],
+ ['인용문','quote','> '],['구분선','divider','---\n'],['접기/펼치기','toggle',':::toggle 제목\n접을 내용을 여기에 작성하세요\n:::end'],
  ['콜아웃','callout',':::callout 💡 메모'],['표','table',null]
 ];let menuIndex=0,slashRange=null;
 function slashMatches(){const ed=$('editor'),pos=ed.selectionStart,before=ed.value.slice(0,pos),start=before.lastIndexOf('\n')+1,line=before.slice(start),match=line.match(/^\/([^\n]*)$/);return match?{start,end:pos,query:match[1]}:null}
@@ -55,7 +55,7 @@ $('editor').addEventListener('keydown',e=>{
   if(e.key==='Escape'){e.preventDefault();closeSlash();return}
  }
  if((e.ctrlKey||e.metaKey)&&['b','i','u'].includes(e.key.toLowerCase())){
-  e.preventDefault();const k=e.key.toLowerCase();styleSelection(k==='b'?'**':k==='i'?'*':'<u>',k==='u'?'</u>':k==='b'?'**':'*');
+  e.preventDefault();const k=e.key.toLowerCase();styleSelection(k==='b'?'**':k==='i'?'*':'++',k==='b'?'**':k==='i'?'*':'++');
  }
 });
 $('editor').addEventListener('input',()=>{menuIndex=0;renderSlash()});
