@@ -6,8 +6,8 @@ from urllib.parse import urlparse,unquote
 from datetime import datetime,timezone
 ROOT=Path(__file__).resolve().parent
 DATA=Path(os.environ.get('LOCAL_NOTION_DATA_DIR',str(ROOT/'shared_data'))).resolve()
-PAGES=DATA/'pages';LOCKS=DATA/'locks';IMAGES=DATA/'images';ATTACHMENTS=DATA/'attachments';HISTORY=DATA/'history';TRASH=DATA/'trash';BACKUPS=DATA/'backups'
-for p in (PAGES,LOCKS,IMAGES,ATTACHMENTS,HISTORY,TRASH,BACKUPS):p.mkdir(parents=True,exist_ok=True)
+PAGES=DATA/'pages';LOCKS=DATA/'locks';IMAGES=DATA/'images';ATTACHMENTS=DATA/'attachments';HISTORY=DATA/'history';TRASH=DATA/'trash';BACKUPS=DATA/'backups';VAULT=DATA/'vault'
+for p in (PAGES,LOCKS,IMAGES,ATTACHMENTS,HISTORY,TRASH,BACKUPS,VAULT):p.mkdir(parents=True,exist_ok=True)
 USER=os.environ.get('USERNAME') or os.environ.get('USER') or 'user'
 HOSTNAME=socket.gethostname();OWNER=HOSTNAME+'/'+USER
 PORT=int(os.environ.get('LOCAL_NOTION_PORT','8765'))
@@ -29,7 +29,7 @@ def backup():
  target=BACKUPS/name;tmp=target.with_suffix('.tmp')
  try:
   with zipfile.ZipFile(tmp,'w',compression=zipfile.ZIP_DEFLATED) as archive:
-   for folder in (PAGES,HISTORY,TRASH,IMAGES,ATTACHMENTS):
+   for folder in (PAGES,HISTORY,TRASH,IMAGES,ATTACHMENTS,VAULT):
     for path in folder.rglob('*'):
      if path.is_file():archive.write(path,path.relative_to(DATA))
   os.replace(tmp,target)
@@ -101,6 +101,7 @@ class Handler(BaseHTTPRequestHandler):
    site=self.headers.get('Sec-Fetch-Site','')
    if site not in ('same-origin','none',''):return self.reply(403,{'error':'Cross-site image request rejected'})
   elif not self.auth():return
+  if p=='/api/vault/list':return self.reply(200,{'items':[{'id':x.stem} for x in VAULT.glob('*.json') if PAGE_ID.fullmatch(x.stem)]})
   if p=='/api/history':
    from urllib.parse import parse_qs
    pid=parse_qs(urlparse(self.path).query).get('id',[''])[0]
@@ -136,6 +137,32 @@ class Handler(BaseHTTPRequestHandler):
   body=self.body()
   if not isinstance(body,dict):return self.reply(400,{'error':'Invalid JSON'})
   with MUTEX:
+   if p=='/api/vault/create':
+    pid=uuid.uuid4().hex
+    return self.reply(201,{'id':pid})
+   if p=='/api/vault/read':
+    pid=body.get('id')
+    if not isinstance(pid,str) or not PAGE_ID.fullmatch(pid):return self.reply(400,{'error':'Invalid vault id'})
+    file=VAULT/(pid+'.json')
+    if not file.is_file():return self.reply(404,{'error':'Not found'})
+    return self.reply(200,json.loads(file.read_text(encoding='utf-8')))
+   if p=='/api/vault/save':
+    pid=body.get('id');salt=body.get('salt');iv=body.get('iv');ciphertext=body.get('ciphertext');locktoken=body.get('lock_token')
+    if not isinstance(pid,str) or not PAGE_ID.fullmatch(pid):return self.reply(400,{'error':'Invalid id'})
+    if not all(isinstance(v,str) for v in (salt,iv,ciphertext)) or len(ciphertext)>1600000:return self.reply(400,{'error':'Invalid encrypted payload'})
+    if not re.fullmatch(r'[A-Za-z0-9+/=]{20,100}',salt) or not re.fullmatch(r'[A-Za-z0-9+/=]{12,100}',iv) or not re.fullmatch(r'[A-Za-z0-9+/=]{20,1600000}',ciphertext):return self.reply(400,{'error':'Invalid encoding'})
+    lock=lock_info(pid)
+    if not lock or not secrets.compare_digest(str(locktoken),str(lock.get('token'))):return self.reply(423,{'error':'Vault lock is required'})
+    target=VAULT/(pid+'.json');expected=body.get('version')
+    if target.exists():
+     current=json.loads(target.read_text(encoding='utf-8'))
+     if current['version']!=expected:return self.reply(409,{'error':'Encrypted page changed'})
+     version=current['version']+1
+    else:
+     if expected!=0:return self.reply(409,{'error':'Invalid initial version'})
+     version=1
+    atomic_json(target,{'salt':salt,'iv':iv,'ciphertext':ciphertext,'version':version})
+    return self.reply(200,{'version':version})
    if p=='/api/backup':return self.reply(200,{'filename':backup()})
    if p=='/api/restore_trash':
     pid=body.get('id')
@@ -153,7 +180,7 @@ class Handler(BaseHTTPRequestHandler):
    pid=body.get('id')
    if not isinstance(pid,str) or not PAGE_ID.fullmatch(pid):return self.reply(400,{'error':'Invalid id'})
    if p=='/api/lock':
-    if not read_page(pid):return self.reply(404,{'error':'Not found'})
+    if not read_page(pid) and not (VAULT/(pid+'.json')).exists() and body.get('vault')!=True:return self.reply(404,{'error':'Not found'})
     folder=lock_for(pid);token=secrets.token_hex(24)
     try:folder.mkdir()
     except FileExistsError:return self.reply(423,{'error':'다른 직원이 편집 중입니다.','lock':active_lock(pid)})
