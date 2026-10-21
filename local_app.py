@@ -118,7 +118,7 @@ class Handler(BaseHTTPRequestHandler):
     if item and not item.get('deleted'):pages.append({**item,'lock':active_lock(item['id']) and {k:v for k,v in active_lock(item['id']).items() if k!='token'}})
    return self.reply(200,{'pages':sorted(pages,key=lambda r:r.get('created_at',''))})
   if p.startswith('/attachments/'):
-   name=unquote(p.split('/')[-1]);valid=re.fullmatch(r'[0-9a-f]{32}\\.(pdf|docx|xlsx|pptx|csv)',name)
+   name=unquote(p.split('/')[-1]);valid=re.fullmatch(r'[0-9a-f]{32}\.(pdf|docx|xlsx|pptx|csv)',name)
    if not valid:return self.reply(404,{'error':'Not found'})
    path=ATTACHMENTS/name
    if not path.is_file():return self.reply(404,{'error':'Not found'})
