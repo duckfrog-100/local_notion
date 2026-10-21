@@ -4,3 +4,6 @@ runtime_data/
 __pycache__/
 .env
 *.log
+
+shared_data/
+test_data/
