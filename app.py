@@ -26,6 +26,7 @@ def cookie_session(handler):
  if session and session['expires']>time.time():return session
  SESSIONS.pop(token,None);return None
 def can_read(db,handler,pid):
+ if not isinstance(pid,str) or not db.execute('SELECT 1 FROM pages WHERE id=?',(pid,)).fetchone():return False
  s=cookie_session(handler);unlocked=s['pages'] if s else set()
  return all(locked_id in unlocked for locked_id,_,_ in descendants_locked(db,pid))
 def connect():
@@ -56,6 +57,7 @@ class Handler(BaseHTTPRequestHandler):
   self.send_header('X-Content-Type-Options','nosniff')
   self.send_header('Content-Security-Policy',"default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; object-src 'none'")
   self.send_header('Cache-Control','no-store')
+  self.send_header('Referrer-Policy','no-referrer')
   for k,v in (headers or {}).items():self.send_header(k,v)
   self.end_headers();self.wfile.write(data)
  def result(self,status,obj):self.send(status,json.dumps(obj,ensure_ascii=False).encode(),'application/json; charset=utf-8')
