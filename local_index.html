@@ -4,8 +4,23 @@
 <script>
 const $=s=>document.getElementById(s);let TOKEN='',pages=[],current=null,lockToken=null,dirty=false,previewMode=false;
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-function tableMarkdown(s){const lines=s.split('\\n'),out=[];for(let i=0;i<lines.length;){if(/^\\|.*\\|$/.test(lines[i])&&i+1<lines.length&&/^\\|[\\s|:\\-]+\\|$/.test(lines[i+1])){const head=lines[i].slice(1,-1).split('|').map(x=>x.trim());let j=i+2;const rows=[];while(j<lines.length&&/^\\|.*\\|$/.test(lines[j])){rows.push(lines[j].slice(1,-1).split('|').map(x=>x.trim()));j++}const cells=arr=>arr.map(v=>'<td>'+esc(v)+'</td>').join('');out.push('<table class="sheet"><thead><tr>'+head.map(v=>'<th>'+esc(v)+'</th>').join('')+'</tr></thead><tbody>'+rows.map(r=>'<tr>'+cells(r)+'</tr>').join('')+'</tbody></table>');i=j;for(let k=i-(rows.length+2)+1;k<i;k++)out[k]=false;continue}out.push(null);i++}return out}
-function markup(s){const tables=tableMarkdown(s);s=s.replace(/\[\[([^\]]+)\]\]/g,(all,title)=>{let target=pages.find(p=>p.title===title);return target?'['+title+'](#page-'+target.id+')':all});return s.split('\n').map((x,i)=>{if(tables[i])return tables[i];if(/^\\|/.test(x)&&tables[i]===false)return '';let a=esc(x).replace(/!\[([^\]]*)\]\((\/images\/[a-f0-9]{32}\.(?:png|jpg|gif|webp))\)/g,'<img alt="$1" src="$2">').replace(/\*\*(.+?)\*\*/g,'<b>$1</b>');if(a.startsWith('### '))return '<h3>'+a.slice(4)+'</h3>';if(a.startsWith('## '))return '<h2>'+a.slice(3)+'</h2>';if(a.startsWith('# '))return '<h1>'+a.slice(2)+'</h1>';a=a.replace(/!\[([^\]]*)\]\((\/images\/[a-f0-9]{32}\.(?:png|jpg|gif|webp))\s+\"w=(\d{1,4})\"\)/g,(_,alt,url,w)=>'<img alt="'+alt+'" src="'+url+'" style="width:min(100%,'+Math.min(1200,Math.max(80,+w))+'px)">');a=a.replace(/\[([^\]]+)\]\(#page-([a-f0-9]{32})\)/g,'<a href="#page-$2">$1</a>').replace(/\[([^\]]+)\]\((\/attachments\/[a-f0-9]{32}\.(?:pdf|docx|xlsx|pptx|csv))\)/g,'<a href="$2" download>$1 ⬇</a>');return a?'<p>'+a+'</p>':'<br>'}).join('')}
+function markup(s){
+ const lines=s.split('\n'),out=[];
+ for(let i=0;i<lines.length;){
+  if(/^\|.*\|$/.test(lines[i])&&i+1<lines.length&&/^\|[\s|:\-]+\|$/.test(lines[i+1])){
+   const header=lines[i].slice(1,-1).split('|').map(v=>v.trim());let j=i+2,rows=[];
+   while(j<lines.length&&/^\|.*\|$/.test(lines[j])){rows.push(lines[j].slice(1,-1).split('|').map(v=>v.trim()));j++}
+   out.push('<table class="sheet"><thead><tr>'+header.map(v=>'<th>'+esc(v)+'</th>').join('')+'</tr></thead><tbody>'+rows.map(r=>'<tr>'+r.map(v=>'<td>'+esc(v)+'</td>').join('')+'</tr>').join('')+'</tbody></table>');i=j;continue;
+  }
+  let x=lines[i++];x=x.replace(/\[\[([^\]]+)\]\]/g,(all,title)=>{let p=pages.find(k=>k.title===title);return p?'['+title+'](#page-'+p.id+')':all});
+  let a=esc(x);
+  a=a.replace(/!\[([^\]]*)\]\((\/images\/[a-f0-9]{32}\.(?:png|jpg|gif|webp))\s+"w=(\d{1,4})"\)/g,(_,alt,url,w)=>'<img alt="'+alt+'" src="'+url+'" style="width:min(100%,'+Math.min(1200,Math.max(80,Number(w)))+'px)">');
+  a=a.replace(/!\[([^\]]*)\]\((\/images\/[a-f0-9]{32}\.(?:png|jpg|gif|webp))\)/g,'<img alt="$1" src="$2">').replace(/\*\*(.+?)\*\*/g,'<b>$1</b>');
+  a=a.replace(/\[([^\]]+)\]\(#page-([a-f0-9]{32})\)/g,'<a href="#page-$2">$1</a>').replace(/\[([^\]]+)\]\((\/attachments\/[a-f0-9]{32}\.(?:pdf|docx|xlsx|pptx|csv))\)/g,'<a href="$2" download>$1 ⬇</a>');
+  if(a.startsWith('### '))out.push('<h3>'+a.slice(4)+'</h3>');else if(a.startsWith('## '))out.push('<h2>'+a.slice(3)+'</h2>');else if(a.startsWith('# '))out.push('<h1>'+a.slice(2)+'</h1>');else out.push(a?'<p>'+a+'</p>':'<br>');
+ }
+ return out.join('');
+}
 async function api(path,data){let r=await fetch(path,{method:data===undefined?'GET':'POST',headers:{'X-Local-Token':TOKEN,...(data===undefined?{}:{'Content-Type':'application/json'})},body:data===undefined?undefined:JSON.stringify(data)}),j=await r.json();if(!r.ok)throw Error(j.error+(j.lock?.owner?' ('+j.lock.owner+')':''));return j}
 function status(s){$('status').textContent=s}
 const TEMPLATES={'제품설명회 검토':'# 제품설명회 검토\n\n## 개최 정보\n- 일자: \n- 요양기관: \n- 제품명: \n\n## 증빙자료\n\n## 확인 사항\n\n## 판단 및 후속 조치\n','학회 후원 검토':'# 학회 후원 검토\n\n## 학회 및 행사\n\n## 지원 유형·금액\n\n## 규약·내부기준 검토\n\n## 승인 및 결과\n','내부심사':'# 내부심사\n\n## 대상 부서\n\n## 일정·심사원\n\n## 점검 결과\n\n## 개선 조치\n','지출보고서':'# 지출보고서\n\n## 대상 기간\n\n## 수집 범위\n\n## 검증 항목\n\n## 이슈 및 조치\n'};
