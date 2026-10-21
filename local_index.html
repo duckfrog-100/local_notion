@@ -50,6 +50,25 @@ async function attach(file){if(!file||!lockToken)return;let ext=(file.name.split
 async function upload(file){if(!file||!lockToken)return;try{let r=await fetch('/api/image',{method:'POST',headers:{'X-Local-Token':TOKEN,'Content-Type':file.type},body:file}),j=await r.json();if(!r.ok)throw Error(j.error);insertAtCursor('\n!['+file.name.replace(/[\[\]()]/g,'')+']('+j.url+')\n')}catch(e){alert(e.message)}}
 $('editor').addEventListener('paste',async e=>{if(!lockToken)return;const items=Array.from(e.clipboardData?.items||[]);const item=items.find(x=>x.kind==='file'&&x.type.startsWith('image/'));if(item){e.preventDefault();const file=item.getAsFile();if(file)await upload(file)}});
 $('preview').addEventListener('dblclick',e=>{
+ const cell=e.target.closest('.sheet td');
+ if(!cell||!lockToken)return;
+ const table=cell.closest('.sheet');
+ const row=cell.parentElement.rowIndex,col=cell.cellIndex;
+ const md=$('editor').value.split('\n');
+ let matches=[];
+ for(let i=0;i<md.length-1;i++)if(/^\|.*\|$/.test(md[i])&&/^\|[\s|:\-]+\|$/.test(md[i+1]))matches.push(i);
+ const index=[...$('preview').querySelectorAll('.sheet')].indexOf(table);
+ if(index<0||!Number.isInteger(matches[index]))return;
+ let lineIndex=matches[index]+row+1;
+ if(lineIndex>=md.length||!md[lineIndex].startsWith('|'))return;
+ let cells=md[lineIndex].slice(1,-1).split('|'),old=(cells[col]||'').trim();
+ const value=prompt('셀 내용 수정',old);
+ if(value===null)return;
+ cells[col]=' '+value.replace(/\|/g,'／').replace(/\r?\n/g,' ')+' ';
+ md[lineIndex]='|'+cells.join('|')+'|';
+ $('editor').value=md.join('\n');dirty=true;updatePreview();status('셀을 수정했습니다. 저장을 눌러주세요.');
+});
+$('preview').addEventListener('dblclick',e=>{
  if(e.target.tagName!=='IMG'||!lockToken)return;
  const path=e.target.getAttribute('src');
  if(!/^\/images\/[a-f0-9]{32}\.(png|jpg|gif|webp)$/.test(path))return;
