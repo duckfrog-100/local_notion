@@ -8,5 +8,5 @@ if not defined LOCAL_NOTION_PASSWORD (
   exit /b 1
 )
 set "LOCAL_NOTION_HOST=0.0.0.0"
-python shared_server.py
+python app.py
 pause
