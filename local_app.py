@@ -91,8 +91,8 @@ class Handler(BaseHTTPRequestHandler):
   except(ValueError,UnicodeError):return None
  def do_GET(self):
   p=urlparse(self.path).path
-  if p=='/':
-   body=(ROOT/'local_index.html').read_bytes()
+  if p in ('/','/legacy'):
+   body=(ROOT/('wysiwyg.html' if p=='/' else 'local_index.html')).read_bytes()
    self.send_response(200);self.send_header('Content-Type','text/html; charset=utf-8');self.send_header('Content-Length',str(len(body)))
    self.send_header('Content-Security-Policy',"default-src 'self'; img-src 'self' data:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; object-src 'none'; base-uri 'none'")
    self.send_header('Cache-Control','no-store');self.end_headers();self.wfile.write(body);return
