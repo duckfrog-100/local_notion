@@ -35,6 +35,16 @@ def backup():
   os.replace(tmp,target)
  finally:tmp.unlink(missing_ok=True)
  return name
+def daily_backup():
+ stamp=datetime.now(timezone.utc).strftime('%Y%m%d')
+ marker=BACKUPS/('daily-'+stamp+'.lock')
+ try:marker.mkdir()
+ except FileExistsError:return
+ try:backup()
+ except Exception:
+  try:marker.rmdir()
+  except OSError:pass
+  raise
 def read_page(pid):
  if not isinstance(pid,str) or not PAGE_ID.fullmatch(pid):return None
  try:return json.loads(file_for(pid).read_text(encoding='utf-8'))
@@ -209,6 +219,8 @@ class Handler(BaseHTTPRequestHandler):
   if len(data)!=n or not data.startswith(sig) or (ext=='webp' and data[8:12]!=b'WEBP'):return self.reply(400,{'error':'이미지 형식 오류'})
   name=uuid.uuid4().hex+'.'+ext;(IMAGES/name).write_bytes(data);return self.reply(201,{'url':'/images/'+name})
 if __name__=='__main__':
+ try:daily_backup()
+ except Exception as error:print('Backup warning:',error)
  print('Shared folder:',DATA)
  print('Local Notion: http://127.0.0.1:'+str(PORT))
  ThreadingHTTPServer(('127.0.0.1',PORT),Handler).serve_forever()
