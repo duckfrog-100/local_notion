@@ -6,8 +6,8 @@ from urllib.parse import urlparse,unquote
 from datetime import datetime,timezone
 ROOT=Path(__file__).resolve().parent
 DATA=Path(os.environ.get('LOCAL_NOTION_DATA_DIR',str(ROOT/'shared_data'))).resolve()
-PAGES=DATA/'pages';LOCKS=DATA/'locks';IMAGES=DATA/'images';HISTORY=DATA/'history';TRASH=DATA/'trash';BACKUPS=DATA/'backups'
-for p in (PAGES,LOCKS,IMAGES,HISTORY,TRASH,BACKUPS):p.mkdir(parents=True,exist_ok=True)
+PAGES=DATA/'pages';LOCKS=DATA/'locks';IMAGES=DATA/'images';ATTACHMENTS=DATA/'attachments';HISTORY=DATA/'history';TRASH=DATA/'trash';BACKUPS=DATA/'backups'
+for p in (PAGES,LOCKS,IMAGES,ATTACHMENTS,HISTORY,TRASH,BACKUPS):p.mkdir(parents=True,exist_ok=True)
 USER=os.environ.get('USERNAME') or os.environ.get('USER') or 'user'
 HOSTNAME=socket.gethostname();OWNER=HOSTNAME+'/'+USER
 PORT=int(os.environ.get('LOCAL_NOTION_PORT','8765'))
@@ -29,7 +29,7 @@ def backup():
  target=BACKUPS/name;tmp=target.with_suffix('.tmp')
  try:
   with zipfile.ZipFile(tmp,'w',compression=zipfile.ZIP_DEFLATED) as archive:
-   for folder in (PAGES,HISTORY,TRASH,IMAGES):
+   for folder in (PAGES,HISTORY,TRASH,IMAGES,ATTACHMENTS):
     for path in folder.rglob('*'):
      if path.is_file():archive.write(path,path.relative_to(DATA))
   os.replace(tmp,target)
@@ -87,7 +87,7 @@ class Handler(BaseHTTPRequestHandler):
    self.send_header('Content-Security-Policy',"default-src 'self'; img-src 'self' data:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; object-src 'none'; base-uri 'none'")
    self.send_header('Cache-Control','no-store');self.end_headers();self.wfile.write(body);return
   if p=='/api/session':return self.reply(200,{'token':LOCAL_TOKEN,'owner':OWNER})
-  if p.startswith('/images/'):
+  if p.startswith('/images/') or p.startswith('/attachments/'):
    site=self.headers.get('Sec-Fetch-Site','')
    if site not in ('same-origin','none',''):return self.reply(403,{'error':'Cross-site image request rejected'})
   elif not self.auth():return
@@ -104,6 +104,12 @@ class Handler(BaseHTTPRequestHandler):
     item=read_page(path.stem)
     if item and not item.get('deleted'):pages.append({**item,'lock':active_lock(item['id']) and {k:v for k,v in active_lock(item['id']).items() if k!='token'}})
    return self.reply(200,{'pages':sorted(pages,key=lambda r:r.get('created_at',''))})
+  if p.startswith('/attachments/'):
+   name=unquote(p.split('/')[-1]);valid=re.fullmatch(r'[0-9a-f]{32}\\.(pdf|docx|xlsx|pptx|csv)',name)
+   if not valid:return self.reply(404,{'error':'Not found'})
+   path=ATTACHMENTS/name
+   if not path.is_file():return self.reply(404,{'error':'Not found'})
+   data=path.read_bytes();self.send_response(200);self.send_header('Content-Type','application/octet-stream');self.send_header('Content-Disposition','attachment; filename="'+name+'"');self.send_header('Content-Length',str(len(data)));self.send_header('X-Content-Type-Options','nosniff');self.end_headers();self.wfile.write(data);return
   if p.startswith('/images/'):
    name=unquote(p.split('/')[-1])
    if not IMAGE_ID.fullmatch(name):return self.reply(404,{'error':'Not found'})
@@ -116,6 +122,7 @@ class Handler(BaseHTTPRequestHandler):
   if not self.auth():return
   p=urlparse(self.path).path
   if p=='/api/image':return self.image_upload()
+  if p=='/api/attachment':return self.attachment_upload()
   body=self.body()
   if not isinstance(body,dict):return self.reply(400,{'error':'Invalid JSON'})
   with MUTEX:
@@ -178,6 +185,19 @@ class Handler(BaseHTTPRequestHandler):
     historical(pid,read_page(pid));os.replace(file_for(pid),TRASH/(pid+'.json'));(lock_for(pid)/'owner.json').unlink(missing_ok=True);lock_for(pid).rmdir()
     return self.reply(200,{'ok':True})
   return self.reply(404,{'error':'Not found'})
+ def attachment_upload(self):
+  try:n=int(self.headers.get('Content-Length','0'))
+  except ValueError:n=0
+  if n<1 or n>20*1024*1024:return self.reply(413,{'error':'20MB 이하만 허용'})
+  ext=self.headers.get('X-File-Extension','').lower()
+  if ext not in ('pdf','docx','xlsx','pptx','csv'):return self.reply(415,{'error':'Unsupported extension'})
+  data=self.rfile.read(n)
+  if len(data)!=n:return self.reply(400,{'error':'Incomplete file'})
+  if ext=='pdf' and not data.startswith(b'%PDF-'):return self.reply(400,{'error':'Invalid PDF'})
+  if ext in ('docx','xlsx','pptx') and not data.startswith(b'PK\\x03\\x04'):return self.reply(400,{'error':'Invalid Office file'})
+  name=uuid.uuid4().hex+'.'+ext;path=ATTACHMENTS/name
+  with open(path,'xb') as out:out.write(data)
+  return self.reply(201,{'url':'/attachments/'+name})
  def image_upload(self):
   try:n=int(self.headers.get('Content-Length','0'))
   except ValueError:n=0
