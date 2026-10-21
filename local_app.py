@@ -1,13 +1,13 @@
 """Local Notion: per-PC localhost server, shared file documents, exclusive edit locks."""
-import os,json,uuid,socket,threading,time,hashlib,base64,re,secrets
+import os,json,uuid,socket,threading,time,hashlib,base64,re,secrets,shutil,zipfile,io
 from pathlib import Path
 from http.server import ThreadingHTTPServer,BaseHTTPRequestHandler
 from urllib.parse import urlparse,unquote
 from datetime import datetime,timezone
 ROOT=Path(__file__).resolve().parent
 DATA=Path(os.environ.get('LOCAL_NOTION_DATA_DIR',str(ROOT/'shared_data'))).resolve()
-PAGES=DATA/'pages';LOCKS=DATA/'locks';IMAGES=DATA/'images'
-for p in (PAGES,LOCKS,IMAGES):p.mkdir(parents=True,exist_ok=True)
+PAGES=DATA/'pages';LOCKS=DATA/'locks';IMAGES=DATA/'images';HISTORY=DATA/'history';TRASH=DATA/'trash';BACKUPS=DATA/'backups'
+for p in (PAGES,LOCKS,IMAGES,HISTORY,TRASH,BACKUPS):p.mkdir(parents=True,exist_ok=True)
 USER=os.environ.get('USERNAME') or os.environ.get('USER') or 'user'
 HOSTNAME=socket.gethostname();OWNER=HOSTNAME+'/'+USER
 PORT=int(os.environ.get('LOCAL_NOTION_PORT','8765'))
@@ -18,6 +18,23 @@ MUTEX=threading.RLock()
 def utc():return datetime.now(timezone.utc).isoformat()
 def file_for(pid):return PAGES/(pid+'.json')
 def lock_for(pid):return LOCKS/pid
+def historical(pid,obj):
+ directory=HISTORY/pid;directory.mkdir(exist_ok=True)
+ out=directory/('%08d.json'%obj['version'])
+ if not out.exists():atomic_json(out,obj)
+def all_pages():
+ return [r for file in PAGES.glob('*.json') if (r:=read_page(file.stem))]
+def backup():
+ name=datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')+'-'+uuid.uuid4().hex[:8]+'.zip'
+ target=BACKUPS/name;tmp=target.with_suffix('.tmp')
+ try:
+  with zipfile.ZipFile(tmp,'w',compression=zipfile.ZIP_DEFLATED) as archive:
+   for folder in (PAGES,HISTORY,TRASH,IMAGES):
+    for path in folder.rglob('*'):
+     if path.is_file():archive.write(path,path.relative_to(DATA))
+  os.replace(tmp,target)
+ finally:tmp.unlink(missing_ok=True)
+ return name
 def read_page(pid):
  if not isinstance(pid,str) or not PAGE_ID.fullmatch(pid):return None
  try:return json.loads(file_for(pid).read_text(encoding='utf-8'))
@@ -74,6 +91,13 @@ class Handler(BaseHTTPRequestHandler):
    site=self.headers.get('Sec-Fetch-Site','')
    if site not in ('same-origin','none',''):return self.reply(403,{'error':'Cross-site image request rejected'})
   elif not self.auth():return
+  if p=='/api/history':
+   from urllib.parse import parse_qs
+   pid=parse_qs(urlparse(self.path).query).get('id',[''])[0]
+   if not PAGE_ID.fullmatch(pid):return self.reply(400,{'error':'Invalid id'})
+   files=sorted((HISTORY/pid).glob('*.json'),reverse=True) if (HISTORY/pid).exists() else []
+   return self.reply(200,{'versions':[{'version':int(x.stem),'updated_at':json.loads(x.read_text(encoding='utf-8')).get('updated_at')} for x in files]})
+  if p=='/api/trash':return self.reply(200,{'pages':[json.loads(x.read_text(encoding='utf-8')) for x in TRASH.glob('*.json')]})
   if p=='/api/pages':
    pages=[]
    for path in PAGES.glob('*.json'):
@@ -95,6 +119,13 @@ class Handler(BaseHTTPRequestHandler):
   body=self.body()
   if not isinstance(body,dict):return self.reply(400,{'error':'Invalid JSON'})
   with MUTEX:
+   if p=='/api/backup':return self.reply(200,{'filename':backup()})
+   if p=='/api/restore_trash':
+    pid=body.get('id')
+    if not isinstance(pid,str) or not PAGE_ID.fullmatch(pid):return self.reply(400,{'error':'Invalid id'})
+    t=TRASH/(pid+'.json')
+    if not t.exists() or file_for(pid).exists():return self.reply(409,{'error':'Cannot restore'})
+    os.replace(t,file_for(pid));return self.reply(200,{'ok':True})
    if p=='/api/create':
     parent=body.get('parent_id')
     title=body.get('title','새 페이지')
@@ -129,12 +160,22 @@ class Handler(BaseHTTPRequestHandler):
     current=read_page(pid)
     if current['version']!=old['version']:return self.reply(409,{'error':'저장 충돌'})
     old.update(title=title.strip(),content=content,parent_id=parent,version=old['version']+1,updated_at=utc(),author=OWNER)
-    atomic_json(file_for(pid),old);return self.reply(200,{'version':old['version']})
+    historical(pid,current);atomic_json(file_for(pid),old);return self.reply(200,{'version':old['version']})
+   if p=='/api/restore_version':
+    lock=lock_info(pid)
+    if not lock or not secrets.compare_digest(str(body.get('lock_token','')),str(lock.get('token','x'))):return self.reply(423,{'error':'편집 잠금이 필요합니다'})
+    version=body.get('version')
+    if type(version)!=int or version<1:return self.reply(400,{'error':'Invalid version'})
+    path=HISTORY/pid/('%08d.json'%version)
+    if not path.exists():return self.reply(404,{'error':'Version not found'})
+    old=read_page(pid);restored=json.loads(path.read_text(encoding='utf-8'))
+    historical(pid,old);restored['version']=old['version']+1;restored['updated_at']=utc();restored['author']=OWNER
+    atomic_json(file_for(pid),restored);return self.reply(200,{'version':restored['version']})
    if p=='/api/delete':
     lock=lock_info(pid)
     if not lock or not secrets.compare_digest(str(body.get('lock_token','')),str(lock.get('token','x'))):return self.reply(423,{'error':'편집 잠금이 필요합니다'})
     if any((r:=read_page(path.stem)) and r.get('parent_id')==pid for path in PAGES.glob('*.json')):return self.reply(409,{'error':'하위 페이지를 먼저 삭제하세요'})
-    file_for(pid).unlink(missing_ok=True);(lock_for(pid)/'owner.json').unlink(missing_ok=True);lock_for(pid).rmdir()
+    historical(pid,read_page(pid));os.replace(file_for(pid),TRASH/(pid+'.json'));(lock_for(pid)/'owner.json').unlink(missing_ok=True);lock_for(pid).rmdir()
     return self.reply(200,{'ok':True})
   return self.reply(404,{'error':'Not found'})
  def image_upload(self):
