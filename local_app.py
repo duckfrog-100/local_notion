@@ -70,7 +70,10 @@ class Handler(BaseHTTPRequestHandler):
    self.send_header('Content-Security-Policy',"default-src 'self'; img-src 'self' data:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; object-src 'none'; base-uri 'none'")
    self.send_header('Cache-Control','no-store');self.end_headers();self.wfile.write(body);return
   if p=='/api/session':return self.reply(200,{'token':LOCAL_TOKEN,'owner':OWNER})
-  if not self.auth():return
+  if p.startswith('/images/'):
+   site=self.headers.get('Sec-Fetch-Site','')
+   if site not in ('same-origin','none',''):return self.reply(403,{'error':'Cross-site image request rejected'})
+  elif not self.auth():return
   if p=='/api/pages':
    pages=[]
    for path in PAGES.glob('*.json'):
